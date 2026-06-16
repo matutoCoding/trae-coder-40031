@@ -2,11 +2,20 @@ import { useState, useMemo } from 'react';
 import { Droplets, Plus, Flame } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useStore } from '@/store';
+import { useUIStore, filterByShiftAndDate, isDayShift, inDateRange } from '@/store/ui';
+import ShiftFilterBar from '@/components/ShiftFilterBar';
 
 const POTS = ['锅-01', '锅-02', '锅-03', '锅-04', '锅-05', '锅-06'];
 
+const getTimeAgo = (ts: string): string => {
+  const diff = new Date().getTime() - new Date(ts.replace(' ', 'T')).getTime();
+  const d = Math.floor(diff / 86400000), h = Math.floor(diff / 3600000), m = Math.floor(diff / 60000);
+  if (d > 0) return `${d}天前`; if (h > 0) return `${h}小时前`; if (m > 0) return `${m}分钟前`; return '刚刚';
+};
+
 export default function Tapping() {
   const { tappings, castings, addTapping, addCasting } = useStore();
+  const { shiftFilter, dateRange } = useUIStore();
   const [tab, setTab] = useState(0);
   const [showTappingForm, setShowTappingForm] = useState(false);
   const [showCastingForm, setShowCastingForm] = useState(false);
@@ -45,29 +54,49 @@ export default function Tapping() {
     setShowCastingForm(false);
   };
 
+  const filteredTappings = useMemo(() => {
+    return tappings.filter(t => {
+      if (shiftFilter !== 'all') {
+        const isDay = isDayShift(t.startTime);
+        if (shiftFilter === 'day' ? !isDay : isDay) return false;
+      }
+      return inDateRange(t.startTime, dateRange);
+    });
+  }, [tappings, shiftFilter, dateRange]);
+
+  const filteredCastings = useMemo(() =>
+    filterByShiftAndDate(castings, shiftFilter, dateRange),
+    [castings, shiftFilter, dateRange]
+  );
+
   const timelineData = useMemo(() => {
-    if (!tappings.length) return [];
-    const sorted = [...tappings].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    if (!filteredTappings.length) return [];
+    const sorted = [...filteredTappings].sort((a, b) => a.startTime.localeCompare(b.startTime));
     return sorted.map(t => ({
       ...t,
       startMs: new Date(t.startTime.replace(' ', 'T')).getTime(),
       endMs: new Date(t.endTime.replace(' ', 'T')).getTime(),
     }));
-  }, [tappings]);
+  }, [filteredTappings]);
 
   const potLatest = useMemo(() => {
     const map = new Map<string, typeof castings[0]>();
-    castings.forEach(c => map.set(c.potNo, c));
+    const sorted = [...castings].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    sorted.forEach(c => {
+      if (!map.has(c.potNo)) map.set(c.potNo, c);
+    });
     return POTS.map(p => map.get(p)).filter(Boolean) as typeof castings;
   }, [castings]);
 
   const chartData = useMemo(() => {
     const map = new Map<string, number>();
-    castings.forEach(c => { map.set(c.potNo, (map.get(c.potNo) || 0) + c.liquidWeight); });
+    filteredCastings.forEach(c => { map.set(c.potNo, (map.get(c.potNo) || 0) + c.liquidWeight); });
     return POTS.map(p => ({ potNo: p, weight: map.get(p) || 0 }));
-  }, [castings]);
+  }, [filteredCastings]);
 
   const potColor = (w: number) => w >= 2800 ? 'border-red-500/60 bg-red-500/10' : w >= 2600 ? 'border-amber-500/60 bg-amber-500/10' : 'border-green-500/60 bg-green-500/10';
+
+  const freshGlow = (ts: string) => new Date().getTime() - new Date(ts.replace(' ', 'T')).getTime() < 1800000 ? 'ring-2 ring-lime-400/60 ring-offset-1 ring-offset-furnace-900 animate-pulse' : '';
 
   const timelineMin = timelineData.length ? Math.min(...timelineData.map(t => t.startMs)) : 0;
   const timelineMax = timelineData.length ? Math.max(...timelineData.map(t => t.endMs)) : 1;
@@ -75,6 +104,8 @@ export default function Tapping() {
 
   return (
     <div className="space-y-6">
+      <ShiftFilterBar />
+
       <div className="flex gap-2">
         {['出炉烧穿', '电石锅浇铸'].map((label, i) => (
           <button key={label} onClick={() => setTab(i)}
@@ -136,7 +167,7 @@ export default function Tapping() {
                 </tr>
               </thead>
               <tbody>
-                {tappings.map(t => (
+                {filteredTappings.map(t => (
                   <tr key={t.id}>
                     <td className="font-mono text-steel-300">{t.tapNo}</td>
                     <td>{t.burnThroughMethod === '烧穿器' ? <span className="badge-info">烧穿器</span> : <span className="badge-warning">氧管烧穿</span>}</td>
@@ -205,7 +236,7 @@ export default function Tapping() {
                 <tr><th>锅号</th><th>液态电石量(kg)</th><th>操作人</th><th>时间</th></tr>
               </thead>
               <tbody>
-                {castings.map(c => (
+                {filteredCastings.map(c => (
                   <tr key={c.id}>
                     <td className="font-mono text-steel-300">{c.potNo}</td>
                     <td className="font-mono">{c.liquidWeight.toLocaleString()}</td>
@@ -222,10 +253,11 @@ export default function Tapping() {
               <h3 className="section-title mb-4">电石锅状态</h3>
               <div className="grid grid-cols-3 gap-3">
                 {potLatest.map(c => (
-                  <div key={c.id} className={`rounded-lg border p-3 ${potColor(c.liquidWeight)}`}>
+                  <div key={c.id} className={`rounded-lg border p-3 ${potColor(c.liquidWeight)} ${freshGlow(c.timestamp)}`}>
                     <div className="text-sm font-bold text-steel-200">{c.potNo}</div>
                     <div className="stat-value text-lg">{c.liquidWeight.toLocaleString()}<span className="text-xs text-steel-400 ml-1">kg</span></div>
                     <div className="text-xs text-steel-400 mt-1">{c.operator}</div>
+                    <div className="text-xs text-steel-500 mt-0.5">{getTimeAgo(c.timestamp)}</div>
                   </div>
                 ))}
               </div>

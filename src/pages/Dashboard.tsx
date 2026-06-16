@@ -1,28 +1,54 @@
 import { useStore } from '@/store';
-import { Package, Zap, Flame, Droplets, AlertTriangle, Activity } from 'lucide-react';
+import { useUIStore, filterByShiftAndDate } from '@/store/ui';
+import ShiftFilterBar from '@/components/ShiftFilterBar';
+import { Package, Zap, Flame, Droplets, AlertTriangle, Activity, Info } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 export default function Dashboard() {
   const { castings, furnaceReadings, powerStats, tappings, temperatureReadings, feedings } = useStore();
+  const { shiftFilter, dateRange } = useUIStore();
 
-  const today = new Date().toISOString().slice(0, 10);
-  const todayCastings = castings.filter(c => c.timestamp.startsWith(today));
-  const todayOutput = todayCastings.reduce((s, c) => s + c.liquidWeight, 0);
   const latestReading = [...furnaceReadings].sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-  const latestPowerStats = [...powerStats].sort((a, b) => b.date.localeCompare(a.date))[0];
-  const pendingTappings = tappings.filter(t => t.startTime.startsWith(today)).length;
 
-  const readings = [...furnaceReadings]
+  const filteredCastings = filterByShiftAndDate(castings, shiftFilter, dateRange);
+  const todayOutput = filteredCastings.reduce((s, c) => s + c.liquidWeight, 0);
+
+  const filteredTappings = tappings.filter(t => {
+    if (shiftFilter !== 'all') {
+      const hour = parseInt(t.startTime.slice(11, 13), 10);
+      const isDay = hour >= 8 && hour < 20;
+      if (shiftFilter === 'day' ? !isDay : isDay) return false;
+    }
+    if (dateRange) {
+      const date = t.startTime.slice(0, 10);
+      if (date < dateRange.start || date > dateRange.end) return false;
+    }
+    return true;
+  });
+  const pendingTappings = filteredTappings.length;
+
+  const filteredPowerStats = powerStats.filter(p => {
+    if (dateRange) {
+      if (p.date < dateRange.start || p.date > dateRange.end) return false;
+    }
+    return true;
+  });
+  const latestPowerStats = [...filteredPowerStats].sort((a, b) => b.date.localeCompare(a.date))[0];
+
+  const filteredReadings = filterByShiftAndDate(furnaceReadings, shiftFilter, dateRange);
+  const readings = [...filteredReadings]
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
     .slice(-12)
     .map(r => ({ time: r.timestamp.slice(11, 16), power: r.power }));
 
-  const alarms = temperatureReadings
+  const filteredAlarms = filterByShiftAndDate(temperatureReadings, shiftFilter, dateRange);
+  const alarms = filteredAlarms
     .filter(r => r.isAlarm)
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     .slice(0, 5);
 
-  const recentFeedings = [...feedings]
+  const filteredFeedings = filterByShiftAndDate(feedings, shiftFilter, dateRange);
+  const recentFeedings = [...filteredFeedings]
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     .slice(0, 5);
 
@@ -30,6 +56,8 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <ShiftFilterBar />
+
       <div className="grid grid-cols-4 gap-4">
         <div className="card-glow p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -63,7 +91,13 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card p-5">
-          <h3 className="section-title mb-4"><Activity className="w-4 h-4 text-lava-400" />三相电流</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="section-title mb-0"><Activity className="w-4 h-4 text-lava-400" />三相电流</h3>
+            <div className="flex items-center gap-1 text-xs text-steel-500">
+              <Info className="w-3 h-3" />
+              <span>当前炉况不受筛选</span>
+            </div>
+          </div>
           {latestReading && (
             <div className="space-y-4">
               {([

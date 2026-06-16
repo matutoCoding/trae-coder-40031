@@ -4,6 +4,7 @@ import {
   Package, Zap, ChevronLeft, ChevronRight, FlameKindling
 } from 'lucide-react';
 import { useState } from 'react';
+import DataManager from './DataManager';
 
 const navItems = [
   { path: '/', label: '生产总览', icon: LayoutDashboard },
@@ -91,7 +92,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <DataManager />
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-xs font-medium text-emerald-400">炉况正常</span>
