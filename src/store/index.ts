@@ -151,6 +151,12 @@ export const generateInitialData = () => {
 
 const STORAGE_KEY = 'carbide-workshop-data';
 
+const PERSIST_KEYS = [
+  'recipes', 'feedings', 'electrodeFills', 'electrodeReleases',
+  'furnaceReadings', 'temperatureReadings',
+  'tappings', 'castings', 'crushings', 'gasTests', 'storages', 'powerStats',
+] as const;
+
 const loadFromStorage = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -164,7 +170,8 @@ const loadFromStorage = () => {
 };
 
 const saved = loadFromStorage();
-const initial = saved || generateInitialData();
+const defaults = generateInitialData();
+const initial = saved ? { ...defaults, ...saved } : defaults;
 
 interface StoreState {
   recipes: Recipe[];
@@ -198,8 +205,7 @@ interface StoreState {
 const persist = (state: Partial<StoreState>) => {
   try {
     const data: Record<string, unknown> = {};
-    (['recipes', 'feedings', 'electrodeFills', 'electrodeReleases',
-      'tappings', 'castings', 'crushings', 'gasTests', 'storages', 'powerStats'] as const).forEach(k => {
+    PERSIST_KEYS.forEach(k => {
       if (k in state) data[k] = state[k as keyof StoreState];
     });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));

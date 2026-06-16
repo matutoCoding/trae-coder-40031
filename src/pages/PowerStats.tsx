@@ -1,80 +1,82 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '@/store';
-import { useUIStore, filterByShiftAndDate } from '@/store/ui';
+import { useUIStore, inDateRange, ShiftFilter, DateRange } from '@/store/ui';
 import ShiftFilterBar from '@/components/ShiftFilterBar';
 import { Zap, TrendingDown, Award, BarChart3, Activity, Minus } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, ReferenceLine, ComposedChart, Line,
+  ResponsiveContainer, ReferenceLine, LineChart, Line,
 } from 'recharts';
+import type { PowerStatsRecord } from '@/types';
 
 const TARGET = 3300;
-const SHIFTS = ['甲班', '乙班', '丙班'];
-const SHIFT_COLORS = ['#f97316', '#3b82f6', '#10b981'];
+const SHIFTS = ['甲班', '乙班', '丙班'] as const;
+const SHIFT_COLORS: Record<string, string> = { '甲班': '#f97316', '乙班': '#3b82f6', '丙班': '#10b981' };
+const SHIFT_DAY_NIGHT: Record<string, 'day' | 'night'> = { '甲班': 'day', '乙班': 'night', '丙班': 'day' };
 const tooltipStyle = { background: '#1a1a2e', border: '1px solid #2a3a5c', borderRadius: 8 };
+
+const filterPower = (records: PowerStatsRecord[], shift: ShiftFilter, range: DateRange | null): PowerStatsRecord[] => {
+  return records.filter(s => {
+    if (!inDateRange(`${s.date} 08:00:00`, range)) return false;
+    if (shift === 'all') return true;
+    return SHIFT_DAY_NIGHT[s.shift] === shift;
+  });
+};
 
 export default function PowerStats() {
   const [tab, setTab] = useState<'perTon' | 'shiftCompare'>('perTon');
   const { powerStats } = useStore();
   const { shiftFilter, dateRange } = useUIStore();
 
-  const adapted = useMemo(() =>
-    powerStats.map(s => ({ ...s, timestamp: `${s.date} 08:00:00` })),
-    [powerStats]
+  const filtered = useMemo(() =>
+    filterPower(powerStats, shiftFilter, dateRange),
+    [powerStats, shiftFilter, dateRange]
   );
-
-  const filteredAdapted = useMemo(() =>
-    filterByShiftAndDate(adapted, shiftFilter, dateRange),
-    [adapted, shiftFilter, dateRange]
-  );
-
-  const filtered = useMemo(() => {
-    const ids = new Set(filteredAdapted.map(s => s.id));
-    return powerStats.filter(s => ids.has(s.id));
-  }, [powerStats, filteredAdapted]);
 
   const totalPower = useMemo(() => filtered.reduce((s, r) => s + r.powerConsumption, 0), [filtered]);
   const totalProduction = useMemo(() => filtered.reduce((s, r) => s + r.production, 0), [filtered]);
   const avgPowerPerTon = useMemo(() => totalProduction ? Math.round(totalPower / totalProduction * 100) / 100 : 0, [totalPower, totalProduction]);
   const passRate = useMemo(() => filtered.length ? Math.round(filtered.filter(s => s.powerPerTon <= TARGET).length / filtered.length * 100) : 0, [filtered]);
 
-  const dailyData = useMemo(() => {
-    const g: Record<string, { date: string; powerPerTon: number; count: number }> = {};
-    filtered.forEach(s => {
-      if (!g[s.date]) g[s.date] = { date: s.date.slice(5), powerPerTon: 0, count: 0 };
-      g[s.date].powerPerTon += s.powerPerTon;
-      g[s.date].count += 1;
+  const trendData = useMemo(() => {
+    const dates = [...new Set(filtered.map(s => s.date))].sort();
+    return dates.map(date => {
+      const point: Record<string, string | number> = { date: date.slice(5) };
+      SHIFTS.forEach(shift => {
+        const rec = filtered.find(s => s.date === date && s.shift === shift);
+        point[shift] = rec ? rec.powerPerTon : 0;
+      });
+      const dayRecs = filtered.filter(s => s.date === date);
+      const tp = dayRecs.reduce((s, r) => s + r.powerConsumption, 0);
+      const tprod = dayRecs.reduce((s, r) => s + r.production, 0);
+      point['日均'] = tprod ? Math.round(tp / tprod * 100) / 100 : 0;
+      return point;
     });
-    return Object.values(g).sort((a, b) => a.date.localeCompare(b.date))
-      .map(x => ({ ...x, powerPerTon: Math.round(x.powerPerTon / x.count * 100) / 100 }));
   }, [filtered]);
 
   const yDomain = useMemo(() => {
-    if (!dailyData.length) return [3000, 3600];
-    const vals = dailyData.map(d => d.powerPerTon);
+    const vals = filtered.map(d => d.powerPerTon);
+    if (!vals.length) return [3000, 3600];
     const min = Math.min(...vals, TARGET);
     const max = Math.max(...vals, TARGET);
     const pad = (max - min) * 0.15 || 50;
     return [Math.floor(min - pad), Math.ceil(max + pad)];
-  }, [dailyData]);
+  }, [filtered]);
 
-  const shiftStats = useMemo(() => SHIFTS.map((shift, i) => {
+  const shiftStats = useMemo(() => SHIFTS.map((shift) => {
     const recs = filtered.filter(s => s.shift === shift);
-    if (!recs.length) return { shift, fill: SHIFT_COLORS[i], avgPowerPerTon: 0, totalProduction: 0, totalPower: 0, best: 0, worst: 0, count: 0 };
+    const color = SHIFT_COLORS[shift];
+    if (!recs.length) return { shift, fill: color, avgPowerPerTon: 0, totalProduction: 0, totalPower: 0, best: 0, worst: 0, count: 0 };
     const tp = recs.reduce((s, r) => s + r.powerConsumption, 0);
     const tprod = recs.reduce((s, r) => s + r.production, 0);
     const ppts = recs.map(r => r.powerPerTon);
-    return { shift, fill: SHIFT_COLORS[i], avgPowerPerTon: Math.round(tp / tprod * 100) / 100, totalProduction: tprod, totalPower: tp, best: Math.min(...ppts), worst: Math.max(...ppts), count: recs.length };
+    return { shift, fill: color, avgPowerPerTon: Math.round(tp / tprod * 100) / 100, totalProduction: tprod, totalPower: tp, best: Math.min(...ppts), worst: Math.max(...ppts), count: recs.length };
   }), [filtered]);
 
   const shiftRanking = useMemo(() => [...shiftStats].filter(s => s.count > 0).sort((a, b) => a.avgPowerPerTon - b.avgPowerPerTon), [shiftStats]);
   const sortedRecords = useMemo(() => [...filtered].sort((a, b) => b.date.localeCompare(a.date) || a.shift.localeCompare(b.shift)), [filtered]);
 
-  const TabBtn = ({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: typeof Zap; label: string }) => (
-    <button onClick={onClick} className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${active ? 'bg-lava-500/20 text-lava-400 border border-lava-500/30' : 'btn-secondary'}`}>
-      <Icon className="w-4 h-4" />{label}
-    </button>
-  );
+  const shiftLabel = shiftFilter === 'day' ? '白班' : shiftFilter === 'night' ? '夜班' : '全部班次';
 
   const StatCard = ({ icon: Icon, iconColor, label, value, unit, valueColor }: any) => (
     <div className="card-glow p-5">
@@ -90,31 +92,39 @@ export default function PowerStats() {
       <ShiftFilterBar />
 
       <div className="flex gap-2">
-        <TabBtn active={tab === 'perTon'} onClick={() => setTab('perTon')} icon={Zap} label="吨石电耗" />
-        <TabBtn active={tab === 'shiftCompare'} onClick={() => setTab('shiftCompare')} icon={BarChart3} label="班组对比" />
+        <button onClick={() => setTab('perTon')} className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${tab === 'perTon' ? 'bg-lava-500/20 text-lava-400 border border-lava-500/30' : 'btn-secondary'}`}>
+          <Zap className="w-4 h-4" />吨石电耗
+        </button>
+        <button onClick={() => setTab('shiftCompare')} className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${tab === 'shiftCompare' ? 'bg-lava-500/20 text-lava-400 border border-lava-500/30' : 'btn-secondary'}`}>
+          <BarChart3 className="w-4 h-4" />班组对比
+        </button>
       </div>
 
       {tab === 'perTon' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard icon={Zap} iconColor="text-lava-400" label="总用电量" value={totalPower.toLocaleString()} unit="kWh" valueColor="text-lava-400" />
+            <StatCard icon={Zap} iconColor="text-lava-400" label={`总用电量 (${shiftLabel})`} value={totalPower.toLocaleString()} unit="kWh" valueColor="text-lava-400" />
             <StatCard icon={Activity} iconColor="text-blue-400" label="总产量" value={totalProduction.toLocaleString()} unit="kg" valueColor="text-blue-400" />
             <StatCard icon={TrendingDown} iconColor="text-emerald-400" label="平均吨石电耗" value={avgPowerPerTon.toLocaleString()} unit="kWh/t" valueColor={avgPowerPerTon <= TARGET ? 'text-emerald-400' : 'text-red-400'} />
             <StatCard icon={Award} iconColor="text-yellow-400" label="达标率" value={passRate} unit="%" valueColor={passRate >= 80 ? 'text-emerald-400' : passRate >= 50 ? 'text-yellow-400' : 'text-red-400'} />
           </div>
 
           <div className="card p-6">
-            <h2 className="section-title mb-2"><TrendingDown className="w-5 h-5 text-lava-400" />吨石电耗趋势</h2>
-            <p className="text-steel-500 text-sm mb-4">目标值: {TARGET} kWh/t</p>
-            <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart data={dailyData}>
+            <h2 className="section-title mb-2"><TrendingDown className="w-5 h-5 text-lava-400" />吨石电耗趋势（按班组）</h2>
+            <p className="text-steel-500 text-sm mb-4">目标值: {TARGET} kWh/t | 每条线为该班组当天的真实电耗</p>
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a3a5c" />
                 <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 12 }} />
                 <YAxis stroke="#64748b" tick={{ fontSize: 12 }} domain={yDomain} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v} kWh/t`, '吨石电耗']} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v: number, n: string) => [`${v} kWh/t`, n]} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                 <ReferenceLine y={TARGET} stroke="#ef4444" strokeDasharray="6 3" label={{ value: `目标 ${TARGET}`, fill: '#ef4444', fontSize: 12, position: 'right' }} />
-                <Line type="monotone" dataKey="powerPerTon" name="吨石电耗" stroke="#f97316" strokeWidth={2.5} dot={{ r: 5, fill: '#f97316', strokeWidth: 2, stroke: '#1a1a2e' }} activeDot={{ r: 7 }} />
-              </ComposedChart>
+                {SHIFTS.map(shift => (
+                  <Line key={shift} type="monotone" dataKey={shift} name={shift} stroke={SHIFT_COLORS[shift]} strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: '#1a1a2e' }} connectNulls={false} />
+                ))}
+                <Line type="monotone" dataKey="日均" name="日均" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+              </LineChart>
             </ResponsiveContainer>
           </div>
 
@@ -124,12 +134,13 @@ export default function PowerStats() {
             </div>
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>日期</th><th>班组</th><th>用电量(kWh)</th><th>产量(kg)</th><th>吨石电耗(kWh/t)</th><th>达标情况</th></tr></thead>
+                <thead><tr><th>日期</th><th>班组</th><th>班次</th><th>用电量(kWh)</th><th>产量(kg)</th><th>吨石电耗(kWh/t)</th><th>达标情况</th></tr></thead>
                 <tbody>
                   {sortedRecords.map(s => (
                     <tr key={s.id}>
                       <td>{s.date}</td>
                       <td>{s.shift}</td>
+                      <td><span className={SHIFT_DAY_NIGHT[s.shift] === 'day' ? 'badge-info' : 'badge-warning'}>{SHIFT_DAY_NIGHT[s.shift] === 'day' ? '白班' : '夜班'}</span></td>
                       <td className="font-mono text-lava-300">{s.powerConsumption.toLocaleString()}</td>
                       <td className="font-mono text-blue-300">{s.production.toLocaleString()}</td>
                       <td className="font-mono"><span className={s.powerPerTon <= TARGET ? 'text-emerald-400' : 'text-red-400'}>{s.powerPerTon.toLocaleString()}</span></td>
@@ -146,15 +157,15 @@ export default function PowerStats() {
       {tab === 'shiftCompare' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {shiftStats.map((s, i) => (
+            {shiftStats.map((s) => (
               <div key={s.shift} className="card-glow p-5">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${SHIFT_COLORS[i]}20` }}>
-                    <Zap className="w-5 h-5" style={{ color: SHIFT_COLORS[i] }} />
+                  <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${s.fill}20` }}>
+                    <Zap className="w-5 h-5" style={{ color: s.fill }} />
                   </div>
                   <div>
                     <div className="text-steel-200 font-medium">{s.shift}</div>
-                    <div className="text-steel-500 text-xs">{s.count} 条记录</div>
+                    <div className="text-steel-500 text-xs">{SHIFT_DAY_NIGHT[s.shift] === 'day' ? '白班' : '夜班'} · {s.count} 条记录</div>
                   </div>
                 </div>
                 <div className="space-y-2.5">
@@ -180,7 +191,11 @@ export default function PowerStats() {
                 <YAxis stroke="#64748b" tick={{ fontSize: 12 }} domain={yDomain} />
                 <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v} kWh/t`, '平均吨石电耗']} />
                 <ReferenceLine y={TARGET} stroke="#ef4444" strokeDasharray="6 3" label={{ value: `目标 ${TARGET}`, fill: '#ef4444', fontSize: 12, position: 'right' }} />
-                <Bar dataKey="avgPowerPerTon" name="平均吨石电耗" radius={[6, 6, 0, 0]} fill="#f97316" />
+                <Bar dataKey="avgPowerPerTon" name="平均吨石电耗" radius={[6, 6, 0, 0]}>
+                  {shiftStats.map(s => (
+                    <rect key={s.shift} fill={s.fill} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -195,7 +210,7 @@ export default function PowerStats() {
                       {['🥇', '🥈', '🥉'][i]}
                     </span>
                     <div>
-                      <div className="text-steel-200 font-medium">{s.shift}</div>
+                      <div className="text-steel-200 font-medium">{s.shift} <span className={`text-xs ml-1 ${SHIFT_DAY_NIGHT[s.shift] === 'day' ? 'text-blue-400' : 'text-amber-400'}`}>{SHIFT_DAY_NIGHT[s.shift] === 'day' ? '白班' : '夜班'}</span></div>
                       <div className="text-steel-500 text-xs">{s.count} 条记录</div>
                     </div>
                   </div>
