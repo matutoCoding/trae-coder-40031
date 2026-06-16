@@ -28,12 +28,18 @@ export default function Dashboard() {
   const pendingTappings = filteredTappings.length;
 
   const filteredPowerStats = powerStats.filter(p => {
+    if (shiftFilter !== 'all') {
+      const SHIFT_DAY_NIGHT: Record<string, 'day' | 'night'> = { '甲班': 'day', '乙班': 'night', '丙班': 'day' };
+      if (SHIFT_DAY_NIGHT[p.shift] !== shiftFilter) return false;
+    }
     if (dateRange) {
       if (p.date < dateRange.start || p.date > dateRange.end) return false;
     }
     return true;
   });
-  const latestPowerStats = [...filteredPowerStats].sort((a, b) => b.date.localeCompare(a.date))[0];
+  const totalPower = filteredPowerStats.reduce((s, p) => s + p.powerConsumption, 0);
+  const totalProduction = filteredPowerStats.reduce((s, p) => s + p.production, 0);
+  const avgPowerPerTon = totalProduction > 0 ? Math.round(totalPower / (totalProduction / 1000) * 10) / 10 : 0;
 
   const filteredReadings = filterByShiftAndDate(furnaceReadings, shiftFilter, dateRange);
   const readings = [...filteredReadings]
@@ -78,7 +84,10 @@ export default function Dashboard() {
             <Flame className="w-4 h-4 text-ember-400" />
             <span className="text-xs text-steel-400">吨石电耗</span>
           </div>
-          <div className="stat-value text-ember-300">{latestPowerStats?.powerPerTon ?? '-'}<span className="text-sm text-steel-500 ml-1">kWh/t</span></div>
+          <div className="stat-value text-ember-300">{avgPowerPerTon || '-'}<span className="text-sm text-steel-500 ml-1">kWh/t</span></div>
+          {filteredPowerStats.length > 0 && (
+            <div className="text-xs text-steel-500 mt-1">基于 {filteredPowerStats.length} 条班组记录汇总</div>
+          )}
         </div>
         <div className="card-glow p-4">
           <div className="flex items-center gap-2 mb-2">

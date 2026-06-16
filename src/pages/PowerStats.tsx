@@ -23,6 +23,11 @@ const filterPower = (records: PowerStatsRecord[], shift: ShiftFilter, range: Dat
   });
 };
 
+const kWhPerTon = (kWh: number, kg: number): number => {
+  if (!kg) return 0;
+  return Math.round(kWh / (kg / 1000) * 10) / 10;
+};
+
 export default function PowerStats() {
   const [tab, setTab] = useState<'perTon' | 'shiftCompare'>('perTon');
   const { powerStats } = useStore();
@@ -35,24 +40,30 @@ export default function PowerStats() {
 
   const totalPower = useMemo(() => filtered.reduce((s, r) => s + r.powerConsumption, 0), [filtered]);
   const totalProduction = useMemo(() => filtered.reduce((s, r) => s + r.production, 0), [filtered]);
-  const avgPowerPerTon = useMemo(() => totalProduction ? Math.round(totalPower / totalProduction * 100) / 100 : 0, [totalPower, totalProduction]);
+  const avgPowerPerTon = useMemo(() => kWhPerTon(totalPower, totalProduction), [totalPower, totalProduction]);
   const passRate = useMemo(() => filtered.length ? Math.round(filtered.filter(s => s.powerPerTon <= TARGET).length / filtered.length * 100) : 0, [filtered]);
+
+  const visibleShifts = useMemo(() => {
+    if (shiftFilter === 'all') return [...SHIFTS];
+    return SHIFTS.filter(s => SHIFT_DAY_NIGHT[s] === shiftFilter);
+  }, [shiftFilter]);
 
   const trendData = useMemo(() => {
     const dates = [...new Set(filtered.map(s => s.date))].sort();
     return dates.map(date => {
-      const point: Record<string, string | number> = { date: date.slice(5) };
+      const point: Record<string, string | number | undefined> = { date: date.slice(5) };
       SHIFTS.forEach(shift => {
+        if (!visibleShifts.includes(shift)) return;
         const rec = filtered.find(s => s.date === date && s.shift === shift);
-        point[shift] = rec ? rec.powerPerTon : 0;
+        point[shift] = rec ? rec.powerPerTon : undefined;
       });
       const dayRecs = filtered.filter(s => s.date === date);
       const tp = dayRecs.reduce((s, r) => s + r.powerConsumption, 0);
       const tprod = dayRecs.reduce((s, r) => s + r.production, 0);
-      point['日均'] = tprod ? Math.round(tp / tprod * 100) / 100 : 0;
+      point['日均'] = tprod ? kWhPerTon(tp, tprod) : undefined;
       return point;
     });
-  }, [filtered]);
+  }, [filtered, visibleShifts]);
 
   const yDomain = useMemo(() => {
     const vals = filtered.map(d => d.powerPerTon);
@@ -70,7 +81,7 @@ export default function PowerStats() {
     const tp = recs.reduce((s, r) => s + r.powerConsumption, 0);
     const tprod = recs.reduce((s, r) => s + r.production, 0);
     const ppts = recs.map(r => r.powerPerTon);
-    return { shift, fill: color, avgPowerPerTon: Math.round(tp / tprod * 100) / 100, totalProduction: tprod, totalPower: tp, best: Math.min(...ppts), worst: Math.max(...ppts), count: recs.length };
+    return { shift, fill: color, avgPowerPerTon: kWhPerTon(tp, tprod), totalProduction: tprod, totalPower: tp, best: Math.min(...ppts), worst: Math.max(...ppts), count: recs.length };
   }), [filtered]);
 
   const shiftRanking = useMemo(() => [...shiftStats].filter(s => s.count > 0).sort((a, b) => a.avgPowerPerTon - b.avgPowerPerTon), [shiftStats]);
@@ -111,19 +122,19 @@ export default function PowerStats() {
 
           <div className="card p-6">
             <h2 className="section-title mb-2"><TrendingDown className="w-5 h-5 text-lava-400" />吨石电耗趋势（按班组）</h2>
-            <p className="text-steel-500 text-sm mb-4">目标值: {TARGET} kWh/t | 每条线为该班组当天的真实电耗</p>
+            <p className="text-steel-500 text-sm mb-4">目标值: {TARGET} kWh/t | 每条线为该班组当天的真实电耗 (kWh/吨)</p>
             <ResponsiveContainer width="100%" height={320}>
               <LineChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a3a5c" />
                 <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 12 }} />
                 <YAxis stroke="#64748b" tick={{ fontSize: 12 }} domain={yDomain} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number, n: string) => [`${v} kWh/t`, n]} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v: number | undefined, n: string) => [v === undefined ? '-' : `${v} kWh/t`, n]} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <ReferenceLine y={TARGET} stroke="#ef4444" strokeDasharray="6 3" label={{ value: `目标 ${TARGET}`, fill: '#ef4444', fontSize: 12, position: 'right' }} />
-                {SHIFTS.map(shift => (
+                {visibleShifts.map(shift => (
                   <Line key={shift} type="monotone" dataKey={shift} name={shift} stroke={SHIFT_COLORS[shift]} strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: '#1a1a2e' }} connectNulls={false} />
                 ))}
-                <Line type="monotone" dataKey="日均" name="日均" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                {shiftFilter === 'all' && <Line type="monotone" dataKey="日均" name="日均" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} connectNulls={false} />}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -157,7 +168,7 @@ export default function PowerStats() {
       {tab === 'shiftCompare' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {shiftStats.map((s) => (
+            {shiftStats.filter(s => s.count > 0).map((s) => (
               <div key={s.shift} className="card-glow p-5">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${s.fill}20` }}>
@@ -180,6 +191,7 @@ export default function PowerStats() {
                 </div>
               </div>
             ))}
+            {shiftStats.filter(s => s.count > 0).length === 0 && <div className="col-span-3 text-center py-8 text-steel-500">暂无数据</div>}
           </div>
 
           <div className="card p-6">

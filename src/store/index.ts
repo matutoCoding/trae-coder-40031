@@ -128,7 +128,7 @@ export const generateInitialData = () => {
         date: new Date(now.getTime() - d * 86400000).toISOString().slice(0, 10),
         powerConsumption: pc,
         production: prod,
-        powerPerTon: Math.round(pc / prod * 100) / 100,
+        powerPerTon: Math.round(pc / (prod / 1000) * 10) / 10,
       });
     });
   }
@@ -150,6 +150,8 @@ export const generateInitialData = () => {
 };
 
 const STORAGE_KEY = 'carbide-workshop-data';
+const STORAGE_VERSION = 2;
+const VERSION_KEY = 'carbide-workshop-version';
 
 const PERSIST_KEYS = [
   'recipes', 'feedings', 'electrodeFills', 'electrodeReleases',
@@ -169,7 +171,13 @@ const loadFromStorage = () => {
   return null;
 };
 
-const saved = loadFromStorage();
+const savedVersion = parseInt(localStorage.getItem(VERSION_KEY) || '0', 10);
+let saved = loadFromStorage();
+if (savedVersion !== STORAGE_VERSION || !saved) {
+  localStorage.removeItem(STORAGE_KEY);
+  saved = null;
+  localStorage.setItem(VERSION_KEY, String(STORAGE_VERSION));
+}
 const defaults = generateInitialData();
 const initial = saved ? { ...defaults, ...saved } : defaults;
 
@@ -204,7 +212,8 @@ interface StoreState {
 
 const persist = (state: Partial<StoreState>) => {
   try {
-    const data: Record<string, unknown> = {};
+    const existing = loadFromStorage() || {};
+    const data: Record<string, unknown> = { ...existing };
     PERSIST_KEYS.forEach(k => {
       if (k in state) data[k] = state[k as keyof StoreState];
     });
