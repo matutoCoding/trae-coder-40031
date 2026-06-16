@@ -150,8 +150,6 @@ export const generateInitialData = () => {
 };
 
 const STORAGE_KEY = 'carbide-workshop-data';
-const STORAGE_VERSION = 2;
-const VERSION_KEY = 'carbide-workshop-version';
 
 const PERSIST_KEYS = [
   'recipes', 'feedings', 'electrodeFills', 'electrodeReleases',
@@ -171,15 +169,16 @@ const loadFromStorage = () => {
   return null;
 };
 
-const savedVersion = parseInt(localStorage.getItem(VERSION_KEY) || '0', 10);
-let saved = loadFromStorage();
-if (savedVersion !== STORAGE_VERSION || !saved) {
-  localStorage.removeItem(STORAGE_KEY);
-  saved = null;
-  localStorage.setItem(VERSION_KEY, String(STORAGE_VERSION));
-}
+const saved = loadFromStorage();
 const defaults = generateInitialData();
-const initial = saved ? { ...defaults, ...saved } : defaults;
+const initial: ReturnType<typeof generateInitialData> = { ...defaults };
+if (saved && typeof saved === 'object') {
+  PERSIST_KEYS.forEach((k) => {
+    if (k in saved && Array.isArray(saved[k]) && saved[k].length > 0) {
+      (initial as Record<string, unknown>)[k] = saved[k];
+    }
+  });
+}
 
 interface StoreState {
   recipes: Recipe[];
